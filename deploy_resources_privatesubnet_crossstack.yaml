@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  DBinstancetype:
+    Description: Please enter the DBinstancetype for privatesubnet
+    Type: String 
+    Default: db.t3.micro
+  EngineName:
+    Description: Please enter the database EngineName
+    Type: String 
+    Default: postgres
+Resources:
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub VPCID
+      AvailabilityZone: !Select [0, !GetAZs '' ]
+      CidrBlock: 10.0.2.0/24
+      Tags:
+        - Key: Name
+          Value: testVPC
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: ElasticIp
+    Properties:
+      SubnetId: 
+        Fn::ImportValue: !Sub PUBLICSUBNETID
+      AllocationId: !GetAtt ElasticIp.AllocationId   
+  ElasticIp:
+    Type: AWS::EC2::EIP
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub VPCID
+      Tags:
+        - Key: Name
+          Value: testVPC
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    #DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet
+  PrivateSG:    
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub VPCID
+      GroupDescription: RDS traffic
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+           # Fn::ImportValue: !Sub PUBLICSG #newchange 
+      Tags:
+        - Key: Name
+          Value: testVPC 
+          # 2nd subnet & association to create dbsubnetgroup for rds start
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub VPCID
+      AvailabilityZone: !Select [1, !GetAZs '' ]
+      CidrBlock: 10.0.3.0/24
+      Tags:
+        - Key: Name
+          Value: testVPC        
+  PrivateSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties: 
+      DBSubnetGroupDescription: Having private subnets in 2 AZ's
+      SubnetIds: 
+        - !Ref PrivateSubnet
+        - !Ref PrivateSubnet2
+
+# end of new change to avoid rds taking default subnet to have multiple AZ.
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: TestRds
+      AllocatedStorage: "5"
+      DBInstanceClass: 'db.t3.micro'
+      Engine: "postgres"
+      MasterUsername: master
+      MasterUserPassword: Master123
+      DBSubnetGroupName: !Ref DBSubnetGroup  #new addition
+      VPCSecurityGroups: 
+        - !Ref PrivateSG
